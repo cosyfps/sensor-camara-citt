@@ -21,7 +21,3 @@ Este proyecto implementa un sistema basado en cámaras para la identificación y
   - Frontend desarrollado en React v18.3.1
   - Base de Datos SQLite3
   - Dependencias adicionales especificadas en el archivo `requirements.txt`
-
-## Contacto
-- Email: kelvin.morenog28@gmail.com
-- LinkedIn: [Kelvin A. Moreno](https://www.linkedin.com/in/kelvin-a-moreno/)

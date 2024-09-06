@@ -1,0 +1,31 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+
+body{
+  background-color: #5c5c5c;
+  height: 100vh;
+}
+
+#root{
+  display: grid;
+  grid-template-rows: 350px auto;
+}
+
+
+@media (min-width: 640px) {
+  #root{
+    grid-template-areas: 
+    "sidelist counter counter"
+    "sidelist graph graph"
+    "sidelist graph graph";
+    grid-template-columns: 350px 1fr;
+    grid-template-rows: 1fr auto;
+  }
+  
+}
+
+
+
+
