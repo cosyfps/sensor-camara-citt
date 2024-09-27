@@ -1,3 +1,5 @@
 numpy==2.1.0
 opencv-python==4.10.0.84
 opencv-python-headless==4.10.0.84
+
+-- instalar yolov3.weights
