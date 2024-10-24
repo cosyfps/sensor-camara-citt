@@ -178,13 +178,16 @@ try:
             if window is None:
                 window = FullscreenWindow()
                 window.show_all()
+                print("Ventana creada y mostrada.")
 
             try:
                 # Capturar un nuevo frame en cada iteración
                 frame = picam2.capture_array()
+                print("Frame capturado correctamente.")
 
                 # Procesar la imagen y obtener detección
                 boxes, classes, scores = process_frame(frame)
+                print(f"Procesamiento del frame completado. {len(scores)} objetos detectados.")
 
                 # Verificar si se detecta una botella
                 detected = False
@@ -199,6 +202,7 @@ try:
                         # Guardar la imagen con la detección
                         image_path = f"/home/botella/botella_detectada_{image_counter}.jpg"
                         cv2.imwrite(image_path, frame)
+                        print(f"Imagen de la botella detectada guardada en {image_path}.")
                         image_counter += 1
                         break
 
@@ -207,6 +211,7 @@ try:
                     window.update_label("¡Botella detectada!")
                     window.bottle_count += 1
                     window.update_counter_label()
+                    print("Botella detectada. Contador actualizado.")
                 else:
                     window.update_label("Esperando detección de botella...")
 
@@ -223,6 +228,7 @@ try:
             if window is not None:
                 window.close()
                 window = None
+                print("Ventana cerrada debido a distancia mayor o igual a 50 cm.")
 
         time.sleep(0.1)
 
@@ -230,5 +236,3 @@ except KeyboardInterrupt:
     print("Detenido por el usuario.")
     GPIO.cleanup()
     picam2.stop()
-    picam2.close()
-    cv2.destroyAllWindows()
