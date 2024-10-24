@@ -2,23 +2,21 @@ import cv2
 import numpy as np
 import tflite_runtime.interpreter as tflite
 from picamera2 import Picamera2
-import RPi.GPIO as GPIO
 import gi
 import os
+import RPi.GPIO as GPIO
 import time
-import signal
-import threading
 
-# Configurar GTK
 gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, GdkPixbuf
+from gi.repository import Gtk, Gdk, GdkPixbuf
 
-# Configurar el sensor de proximidad
-TRIG_PIN = 23
-ECHO_PIN = 24
+# Configuración del GPIO
 GPIO.setmode(GPIO.BCM)
-GPIO.setup(TRIG_PIN, GPIO.OUT)
-GPIO.setup(ECHO_PIN, GPIO.IN)
+GPIO.setwarnings(False)  # Deshabilitar advertencias de GPIO
+TRIG = 27  # Pin TRIG del sensor
+ECHO = 17  # Pin ECHO del sensor
+GPIO.setup(TRIG, GPIO.OUT)
+GPIO.setup(ECHO, GPIO.IN)
 
 # Cargar el modelo TFLite
 model_path = "/home/botella/Modelos/ssd_mobilenet_v2_coco_quant_postprocess.tflite"  # Cambia esto al nombre de tu modelo
@@ -30,9 +28,34 @@ input_details = interpreter.get_input_details()
 output_details = interpreter.get_output_details()
 
 # Cargar la imagen de fondo
-background_path = "/home/botella/background.jpg"  # Cambia esto al nombre de tu archivo de fondo
+background_path = "/home/botella/background.jpg"
 background = cv2.imread(background_path)
-background = cv2.resize(background, (640, 480))  # Ajustar el tamaño del fondo si es necesario
+
+# Inicializar la cámara
+picam2 = Picamera2()
+picam2.configure(picam2.create_preview_configuration())
+picam2.start()
+
+# Función para medir distancia
+def medir_distancia():
+    # Enviar pulso al TRIG
+    GPIO.output(TRIG, True)
+    time.sleep(0.00001)
+    GPIO.output(TRIG, False)
+
+    # Medir el tiempo de retorno del pulso en ECHO
+    while GPIO.input(ECHO) == 0:
+        inicio_pulso = time.time()
+
+    while GPIO.input(ECHO) == 1:
+        fin_pulso = time.time()
+
+    # Calcular la distancia en cm
+    duracion_pulso = fin_pulso - inicio_pulso
+    distancia = duracion_pulso * 17150
+    distancia = round(distancia, 2)
+
+    return distancia
 
 # Función para procesar la imagen
 def process_frame(frame):
@@ -50,6 +73,10 @@ def process_frame(frame):
         input_data = np.array(frame_resized, dtype=np.float32) / 255.0
     else:
         input_data = np.clip(frame_resized, 0, 255).astype(np.uint8)
+
+    # Verificar si las dimensiones coinciden con las esperadas
+    if input_data.shape[-1] != input_shape[-1]:
+        input_data = cv2.cvtColor(input_data, cv2.COLOR_RGB2BGR)
 
     # Expandir dimensiones para la entrada
     input_data = np.expand_dims(input_data, axis=0)
@@ -82,19 +109,44 @@ class FullscreenWindow(Gtk.Window):
         self.image = Gtk.Image()
         self.label = Gtk.Label(label="Esperando detección de botella...")
         self.label.set_name("label")
+        self.label.set_halign(Gtk.Align.END)
+        self.label.set_valign(Gtk.Align.START)
 
-        vbox.pack_start(self.image, True, True, 0)
         vbox.pack_start(self.label, False, False, 0)
+        vbox.pack_start(self.image, True, True, 0)
 
         # Botón para cerrar la aplicación
         self.button = Gtk.Button(label="Cerrar Aplicación")
         self.button.connect("clicked", self.on_close_button_clicked)
         vbox.pack_start(self.button, False, False, 0)
 
-        self.show_all()
+        # Etiqueta para el contador de botellas detectadas
+        self.counter_label = Gtk.Label(label="Botellas detectadas: 0")
+        self.counter_label.set_halign(Gtk.Align.END)
+        vbox.pack_start(self.counter_label, False, False, 0)
+
+        # Establecer la imagen de fondo
+        self.set_app_paintable(True)
+        self.connect("draw", self.on_draw)
+
+        # Cargar la imagen de fondo como pixbuf y redimensionarla para llenar toda la ventana
+        self.background_pixbuf = GdkPixbuf.Pixbuf.new_from_file(background_path)
+        screen = self.get_screen()
+        screen_width = screen.get_width()
+        screen_height = screen.get_height()
+        self.background_pixbuf = self.background_pixbuf.scale_simple(screen_width, screen_height, GdkPixbuf.InterpType.BILINEAR)
+
+        self.bottle_count = 0
+
+    def on_draw(self, widget, cr):
+        Gdk.cairo_set_source_pixbuf(cr, self.background_pixbuf, 0, 0)
+        cr.paint()
 
     def update_label(self, message):
         self.label.set_text(message)
+
+    def update_counter_label(self):
+        self.counter_label.set_text(f"Botellas detectadas: {self.bottle_count}")
 
     def update_image(self, frame):
         # Convertir la imagen de OpenCV a GdkPixbuf
@@ -104,102 +156,40 @@ class FullscreenWindow(Gtk.Window):
         self.image.set_from_pixbuf(pixbuf)
 
     def on_close_button_clicked(self, widget):
-        self.on_destroy(widget)
+        self.close()
+        Gtk.main_quit()
 
     def on_destroy(self, widget):
-        print("Cerrando la aplicación...")
-        if picam2:
-            picam2.stop()
-        try:
-            GPIO.cleanup()
-        except RuntimeWarning:
-            pass
-        cv2.destroyAllWindows()
         Gtk.main_quit()
-        os._exit(0)
-
-# Función para medir la distancia usando el sensor ultrasónico
-def medir_distancia():
-    GPIO.output(TRIG_PIN, True)
-    time.sleep(0.00001)
-    GPIO.output(TRIG_PIN, False)
-
-    start_time = time.time()
-    stop_time = time.time()
-
-    while GPIO.input(ECHO_PIN) == 0:
-        start_time = time.time()
-
-    while GPIO.input(ECHO_PIN) == 1:
-        stop_time = time.time()
-
-    elapsed_time = stop_time - start_time
-    distance = (elapsed_time * 34300) / 2
-    return distance
-
-# Manejador de señal para limpiar los recursos al interrumpir el script
-def signal_handler(sig, frame):
-    print("\nInterrupción detectada, limpiando recursos...")
-    if picam2:
-        picam2.stop()
-    try:
-        GPIO.cleanup()
-    except RuntimeWarning:
-        pass
-    cv2.destroyAllWindows()
-    Gtk.main_quit()
-    os._exit(0)
-
-# Registrar el manejador de señales
-signal.signal(signal.SIGINT, signal_handler)
-
-# Iniciar la Picamera2
-picam2 = Picamera2()
-picam2.configure(picam2.create_preview_configuration())
-picam2.start()
-
-# Iniciar la ventana GTK
-def iniciar_gtk():
-    window = FullscreenWindow()
-    Gtk.main()
-
-gtk_thread = threading.Thread(target=iniciar_gtk)
-gtk_thread.daemon = True
-gtk_thread.start()
 
 # Contador para las imágenes guardadas
 image_counter = 0
+bottle_detected_once = False
+window = None  # Inicializar la ventana como None
 
 # Loop principal para la detección
-def main_loop():
-    global image_counter
-    try:
-        while True:
-            # Medir la distancia con el sensor ultrasónico
-            distancia = medir_distancia()
-            print(f"Distancia medida: {distancia:.2f} cm")
+try:
+    while True:
+        distancia = medir_distancia()
+        print(f"Distancia: {distancia} cm")
 
-            # Actualizar el mensaje en la ventana con la distancia medida
-            window.update_label(f"Distancia medida: {distancia:.2f} cm")
+        # Si la distancia es menor a 50 cm, iniciar la ventana
+        if distancia < 50:
+            if window is None:
+                window = FullscreenWindow()
+                window.show_all()
 
-            # Procesar la imagen solo si el sensor de proximidad detecta un objeto a menos de 40 cm
-            if distancia <= 40:
+            try:
+                # Capturar un nuevo frame en cada iteración
                 frame = picam2.capture_array()
 
-                # Combinar el fondo con la imagen de la cámara
-                frame = cv2.addWeighted(background, 0.5, frame, 0.5, 0)
-
                 # Procesar la imagen y obtener detección
-                try:
-                    boxes, classes, scores = process_frame(frame)
-                except ValueError as e:
-                    print(e)
-                    continue
+                boxes, classes, scores = process_frame(frame)
 
                 # Verificar si se detecta una botella
                 detected = False
                 for i in range(len(scores)):
-                    if scores[i] > 0.5 and int(classes[i]) == 43:  # Cambia 43 por el índice correcto si es diferente
+                    if scores[i] > 0.4 and int(classes[i]) == 43:  # Cambia 43 por el índice correcto si es diferente
                         detected = True
                         box = boxes[i]
                         h, w, _ = frame.shape
@@ -212,19 +202,33 @@ def main_loop():
                         image_counter += 1
                         break
 
-                # Actualizar el mensaje y la imagen en la ventana
+                # Actualizar el mensaje, contador y la imagen en la ventana
                 if detected:
                     window.update_label("¡Botella detectada!")
+                    window.bottle_count += 1
+                    window.update_counter_label()
+                else:
+                    window.update_label("Esperando detección de botella...")
+
                 window.update_image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
 
-    finally:
-        if picam2:
-            picam2.stop()
-        try:
-            GPIO.cleanup()
-        except RuntimeWarning:
-            pass
-        cv2.destroyAllWindows()
+                # Procesar eventos de GTK
+                while Gtk.events_pending():
+                    Gtk.main_iteration()
 
-# Ejecutar el bucle principal en el hilo principal
-main_loop()
+            except RuntimeError as e:
+                print(f"Error al adquirir la cámara: {e}")
+        else:
+            # Cerrar la ventana si la distancia es mayor o igual a 50 cm
+            if window is not None:
+                window.close()
+                window = None
+
+        time.sleep(0.1)
+
+except KeyboardInterrupt:
+    print("Detenido por el usuario.")
+    GPIO.cleanup()
+    picam2.stop()
+    picam2.close()
+    cv2.destroyAllWindows()
